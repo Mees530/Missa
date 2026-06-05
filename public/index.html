@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>🍺 Beer Counter</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Fredoka+One&family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <div id="login-screen">
+    <div class="login-card">
+      <div class="login-emoji">🍺</div>
+      <h1 class="login-title">Beer Counter</h1>
+      <p class="login-subtitle">Who's thirsty?</p>
+      <input
+        type="password"
+        id="password-input"
+        placeholder="Password..."
+        autocomplete="current-password"
+        onkeydown="if(event.key==='Enter') login()"
+      >
+      <button class="login-btn" onclick="login()">Let's Go! 🎉</button>
+      <p id="login-error" class="login-error"></p>
+    </div>
+  </div>
+
+  <div id="app" class="hidden">
+    <header>
+      <div class="header-inner">
+        <h1 class="header-title">🍺 Beer Counter</h1>
+        <button class="logout-btn" onclick="logout()">Logout</button>
+      </div>
+    </header>
+
+    <main>
+      <div id="people-grid" class="people-grid"></div>
+
+      <div class="bottom-bar">
+        <div class="add-person-row">
+          <input
+            type="text"
+            id="new-name"
+            placeholder="Friend's name..."
+            maxlength="30"
+            onkeydown="if(event.key==='Enter') addPerson()"
+          >
+          <button class="add-btn" onclick="addPerson()">+ Add</button>
+        </div>
+        <button class="reset-btn" onclick="resetAll()">🔄 Reset All</button>
+      </div>
+    </main>
+
+    <footer>
+      <p>Tap a glass to count a beer · Syncs every 2 seconds</p>
+    </footer>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
