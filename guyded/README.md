@@ -1,13 +1,14 @@
 # Guyded — WhatsApp Webhook
 
-A FastAPI service that receives WhatsApp messages via the Meta Cloud API, persists them in Supabase (Postgres), and uses the Anthropic API to draft a reply. Drafts sit in `handler_queue` as `pending` — nothing is sent to the user until a human approves the draft.
+A FastAPI service that receives WhatsApp messages via the Meta Cloud API, persists them in Supabase (Postgres), and uses the Anthropic API to draft a reply. A Streamlit console lets you review, edit, approve, or reject every draft before anything is sent.
 
 ## Project structure
 
 ```
 guyded/
-├── main.py                # FastAPI app, webhook handlers, inbound pipeline
-├── database.py            # asyncpg pool + all DB helpers
+├── main.py                # FastAPI webhook — inbound pipeline
+├── console.py             # Streamlit review console
+├── database.py            # asyncpg pool + DB helpers (used by main.py)
 ├── prompts.py             # Guyded system prompt
 ├── migrations/
 │   └── 001_initial.sql    # Run once in Supabase to create the schema
@@ -63,11 +64,19 @@ Edit `.env`:
 postgresql://postgres:[PASSWORD]@db.[PROJECT-REF].supabase.co:5432/postgres
 ```
 
-### 4. Run the server
+### 4. Run the webhook server
 
 ```bash
 uvicorn main:app --reload --port 8000
 ```
+
+### 4b. Run the review console (separate terminal)
+
+```bash
+streamlit run console.py
+```
+
+The console opens at `http://localhost:8501`. It auto-refreshes every 30 seconds and shows every `pending` draft alongside the full conversation thread.
 
 ### 5. Expose locally with ngrok
 
@@ -116,7 +125,27 @@ POST /webhook
   └── insert handler_queue row (status='pending', ai_draft=<response>)
 ```
 
-The `handler_queue.status` lifecycle is `pending → approved / rejected`. Sending the `final_text` to the user is a separate step not yet implemented.
+The `handler_queue.status` lifecycle:
+
+```
+pending  →  sent      (Approve & Send in console)
+         →  rejected  (Reject in console)
+```
+
+## Console (`console.py`)
+
+```
+streamlit run console.py
+```
+
+For each pending draft the console shows:
+
+1. **Conversation thread** — last 20 messages rendered as a chat (inbound = user bubble, outbound = assistant bubble).
+2. **Editable text area** — pre-filled with the AI draft; edit freely before acting.
+3. **Approve & Send** — calls the WhatsApp Cloud API with the (optionally edited) text, marks the queue row `sent`, and inserts an `outbound` row in `messages`.
+4. **Reject** — marks the row `rejected`; nothing is sent.
+
+The page auto-refreshes every 30 s so new drafts appear without manual reload.
 
 ## Notes
 
