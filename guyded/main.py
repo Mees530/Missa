@@ -1,18 +1,38 @@
 import os
-import httpx
-from fastapi import FastAPI, Request, HTTPException, Query
-from fastapi.responses import PlainTextResponse
+from contextlib import asynccontextmanager
+
+import anthropic
 from dotenv import load_dotenv
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import PlainTextResponse
+
+import database
+from prompts import SYSTEM_PROMPT
 
 load_dotenv()
 
-WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN")
-PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID")
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN")
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+MODEL = "claude-sonnet-4-6"
 
-WHATSAPP_API_URL = "https://graph.facebook.com/v19.0"
+_anthropic_client: anthropic.AsyncAnthropic | None = None
 
-app = FastAPI(title="Guyded WhatsApp Webhook")
+
+def _get_anthropic() -> anthropic.AsyncAnthropic:
+    global _anthropic_client
+    if _anthropic_client is None:
+        _anthropic_client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
+    return _anthropic_client
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await database.init_pool()
+    yield
+    await database.close_pool()
+
+
+app = FastAPI(title="Guyded WhatsApp Webhook", lifespan=lifespan)
 
 
 @app.get("/webhook", response_class=PlainTextResponse)
@@ -30,32 +50,41 @@ async def verify_webhook(
 async def receive_message(request: Request):
     body = await request.json()
 
-    entry = body.get("entry", [])
-    for e in entry:
-        for change in e.get("changes", []):
+    for entry in body.get("entry", []):
+        for change in entry.get("changes", []):
             value = change.get("value", {})
-            messages = value.get("messages", [])
-            for message in messages:
+            for message in value.get("messages", []):
                 if message.get("type") == "text":
-                    from_number = message["from"]
-                    text = message["text"]["body"]
-                    await send_message(from_number, text)
+                    await handle_inbound(
+                        wa_id=message["from"],
+                        text=message["text"]["body"],
+                    )
 
     return {"status": "ok"}
 
 
-async def send_message(to: str, text: str) -> None:
-    url = f"{WHATSAPP_API_URL}/{PHONE_NUMBER_ID}/messages"
-    headers = {
-        "Authorization": f"Bearer {WHATSAPP_TOKEN}",
-        "Content-Type": "application/json",
-    }
-    payload = {
-        "messaging_product": "whatsapp",
-        "to": to,
-        "type": "text",
-        "text": {"body": text},
-    }
-    async with httpx.AsyncClient() as client:
-        response = await client.post(url, json=payload, headers=headers)
-        response.raise_for_status()
+async def handle_inbound(wa_id: str, text: str) -> None:
+    user_id = await database.upsert_user(wa_id)
+    await database.insert_message(user_id, "inbound", text)
+
+    history = await database.get_recent_messages(user_id)
+
+    # Build Anthropic messages list; merge consecutive same-role turns so the
+    # API's strict alternation requirement is always satisfied.
+    api_messages: list[dict] = []
+    for entry in history:
+        role = "user" if entry["direction"] == "inbound" else "assistant"
+        if api_messages and api_messages[-1]["role"] == role:
+            api_messages[-1]["content"] += "\n" + entry["body"]
+        else:
+            api_messages.append({"role": role, "content": entry["body"]})
+
+    response = await _get_anthropic().messages.create(
+        model=MODEL,
+        max_tokens=1024,
+        system=SYSTEM_PROMPT,
+        messages=api_messages,
+    )
+
+    ai_draft = response.content[0].text
+    await database.insert_handler_queue(user_id, ai_draft)
